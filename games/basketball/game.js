@@ -17,8 +17,9 @@ let score1 = 0, score2 = 0, bounces = 0;
 let gameMode = 'bot'; 
 let myPlayerNumber = 1;
 let currentRoomId = null;
-let socket;
+let socket = null;
 let isMyTurn = true;
+let currentPointer = { x: 0, y: 0 };
 
 const P1_START_X = 120, P1_START_Y = 380;
 const P2_START_X = 280, P2_START_Y = 380;
@@ -31,32 +32,34 @@ function startGame(mode) {
   gameMode = mode;
   document.getElementById('menu').style.display = 'none';
   document.getElementById('game-info').style.display = 'flex';
-  
-  if (mode === 'online') {
-    setupSocket();
-  }
 
   if (!game) {
     game = new Phaser.Game(config);
   } else {
     resetGame();
   }
+
+  if (mode === 'online') {
+    setupSocket();
+  }
 }
 
 function setupSocket() {
-  if (socket) return;
-  socket = io();
+  if (!socket) {
+    socket = io();
+  }
 
-  socket.on('waiting', (msg) => {
-    document.getElementById('p1-score').innerText = msg;
+  socket.on('waiting_for_opponent', () => {
+    document.getElementById('p1-score').innerText = 'Поиск второго игрока...';
+    document.getElementById('p2-score').innerText = '';
   });
 
   socket.on('init_player', (data) => {
     myPlayerNumber = data.number;
     currentRoomId = data.roomId;
     
-    document.getElementById('p1-score').innerText = `Игрок 1: 0`;
-    document.getElementById('p2-score').innerText = `Игрок 2: 0`;
+    document.getElementById('p1-score').innerText = `Игрок 1: ${score1}`;
+    document.getElementById('p2-score').innerText = `Игрок 2: ${score2}`;
 
     if (myPlayerNumber === 2) {
       myBall = ball2;
@@ -95,8 +98,8 @@ function create() {
 
   drawHoopAndBackboard(scene);
 
-  ball1 = createBall(scene, P1_START_X, P1_START_Y, 0x38bdf8); // Синий
-  ball2 = createBall(scene, P2_START_X, P2_START_Y, 0xf43f5e); // Красный
+  ball1 = createBall(scene, P1_START_X, P1_START_Y, 0x38bdf8);
+  ball2 = createBall(scene, P2_START_X, P2_START_Y, 0xf43f5e);
 
   myBall = ball1;
   enemyBall = ball2;
@@ -109,27 +112,32 @@ function create() {
     scene.physics.add.overlap(b, hoop, () => handleGoal(scene, b));
   });
 
-  // Проверка остановки мяча (Запрет прицеливания в движении)
+  // Захват нажатия (только если мяч практически неподвижен)
   scene.input.on('pointerdown', (pointer) => {
     if (!isMyTurn || !myBall) return;
-    
-    // Мяч считается остановленным, если его скорость меньше 15
-    const isStopped = myBall.body.velocity.length() < 15;
-    if (!isStopped) return;
+    if (myBall.body.speed > 10) return; // Запрет прицеливания во время движения
 
     isAiming = true;
-    scene.physics.world.timeScale = 0.3; // Замедление при прицеливании
+    currentPointer.x = pointer.x;
+    currentPointer.y = pointer.y;
+    scene.physics.world.timeScale = 0.3;
   });
 
-  window.addEventListener('pointerup', (e) => {
+  scene.input.on('pointermove', (pointer) => {
+    if (isAiming) {
+      currentPointer.x = pointer.x;
+      currentPointer.y = pointer.y;
+    }
+  });
+
+  scene.input.on('pointerup', () => {
     if (!isAiming) return;
     isAiming = false;
     scene.physics.world.timeScale = 1.0;
     trajectoryGraphics.clear();
 
-    const pointerPos = getCanvasPointerPos(scene, e);
-    const vx = (myBall.x - pointerPos.x) * 3.8;
-    const vy = (myBall.y - pointerPos.y) * 3.8;
+    const vx = (myBall.x - currentPointer.x) * 3.8;
+    const vy = (myBall.y - currentPointer.y) * 3.8;
 
     myBall.body.setVelocity(vx, vy);
 
@@ -140,15 +148,6 @@ function create() {
       setTimeout(() => botTurn(scene), 3000);
     }
   });
-}
-
-// Преобразование глобальных координат мыши в координаты игрового Canvas
-function getCanvasPointerPos(scene, event) {
-  const canvasBounds = scene.game.canvas.getBoundingClientRect();
-  return {
-    x: event.clientX - canvasBounds.left,
-    y: event.clientY - canvasBounds.top
-  };
 }
 
 function createBall(scene, x, y, color) {
@@ -185,14 +184,10 @@ function drawHoopAndBackboard(scene) {
 }
 
 function update() {
-  const scene = this;
   if (isAiming && myBall) {
     trajectoryGraphics.clear();
-    
-    // Получаем корректные координаты мыши даже за пределами окна
-    const pointerPos = getCanvasPointerPos(scene, window.event || {});
-    const vx = (myBall.x - pointerPos.x) * 3.8;
-    const vy = (myBall.y - pointerPos.y) * 3.8;
+    const vx = (myBall.x - currentPointer.x) * 3.8;
+    const vy = (myBall.y - currentPointer.y) * 3.8;
 
     drawTrajectory(myBall.x, myBall.y, vx, vy, config.physics.arcade.gravity.y);
   }
@@ -231,7 +226,6 @@ function botTurn(scene) {
   }, 3000);
 }
 
-// Правильный расчет очков (1 очко за чистый гол + 1 за каждый рикошет)
 function handleGoal(scene, ball) {
   const points = 1 + bounces; 
   if (ball === ball1) {
