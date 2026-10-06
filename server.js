@@ -11,38 +11,48 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-let players = {};
+let waitingPlayer = null;
 
 io.on('connection', (socket) => {
   console.log(`[+] Подключился игрок: ${socket.id}`);
 
-  // Назначаем номер игрока (1 или 2)
-  if (Object.keys(players).length < 2) {
-    const playerNum = Object.keys(players).length === 0 ? 1 : 2;
-    players[socket.id] = { id: socket.id, number: playerNum };
-    socket.emit('init_player', { number: playerNum });
+  let roomId;
+
+  // Логика подбора пары (Matchmaking)
+  if (waitingPlayer) {
+    roomId = `room_${waitingPlayer.id}_${socket.id}`;
+    socket.join(roomId);
+    waitingPlayer.join(roomId);
+
+    waitingPlayer.emit('init_player', { number: 1, roomId });
+    socket.emit('init_player', { number: 2, roomId });
+
+    waitingPlayer = null;
   } else {
-    socket.emit('init_player', { number: 0 }); // Наблюдатель
+    waitingPlayer = socket;
+    socket.emit('waiting', 'Ожидание второго игрока...');
   }
 
-  // Передача импульса броска сопернику
+  // Синхронизация броска
   socket.on('shoot', (data) => {
-    socket.broadcast.emit('enemy_shoot', data);
+    socket.to(data.roomId).emit('enemy_shoot', data);
   });
 
-  // Синхронизация позиций мячей
+  // Синхронизация движения мяча
   socket.on('update_ball', (data) => {
-    socket.broadcast.emit('enemy_ball_update', data);
+    socket.to(data.roomId).emit('enemy_ball_update', data);
   });
 
   socket.on('disconnect', () => {
     console.log(`[-] Игрок отключился: ${socket.id}`);
-    delete players[socket.id];
+    if (waitingPlayer === socket) {
+      waitingPlayer = null;
+    }
   });
 });
 
 server.listen(PORT, () => {
   console.log(`================================================`);
-  console.log(` ?? Сервер запущен! Доступ по адресу: http://localhost:${PORT}`);
+  console.log(` ?? Сервер запущен! http://localhost:${PORT}`);
   console.log(`================================================`);
 });

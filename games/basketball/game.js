@@ -14,8 +14,9 @@ const config = {
 let game, ball1, ball2, myBall, enemyBall, hoop, backboard;
 let isAiming = false, trajectoryGraphics;
 let score1 = 0, score2 = 0, bounces = 0;
-let gameMode = 'bot'; // 'bot' или 'online'
+let gameMode = 'bot'; 
 let myPlayerNumber = 1;
+let currentRoomId = null;
 let socket;
 let isMyTurn = true;
 
@@ -46,13 +47,23 @@ function setupSocket() {
   if (socket) return;
   socket = io();
 
+  socket.on('waiting', (msg) => {
+    document.getElementById('p1-score').innerText = msg;
+  });
+
   socket.on('init_player', (data) => {
-    if (data.number !== 0) {
-      myPlayerNumber = data.number;
-      isMyTurn = true;
-      document.getElementById('p1-score').innerText = `Вы (Игрок ${myPlayerNumber}): 0`;
+    myPlayerNumber = data.number;
+    currentRoomId = data.roomId;
+    
+    document.getElementById('p1-score').innerText = `Игрок 1: 0`;
+    document.getElementById('p2-score').innerText = `Игрок 2: 0`;
+
+    if (myPlayerNumber === 2) {
+      myBall = ball2;
+      enemyBall = ball1;
     } else {
-      alert('Комната заполнена! Вы зашли как зритель.');
+      myBall = ball1;
+      enemyBall = ball2;
     }
   });
 
@@ -73,7 +84,6 @@ function create() {
   const scene = this;
   trajectoryGraphics = scene.add.graphics();
 
-  // Границы игрового поля
   const floor = scene.add.rectangle(450, 490, 900, 20, 0x475569);
   scene.physics.add.existing(floor, true);
 
@@ -85,19 +95,12 @@ function create() {
 
   drawHoopAndBackboard(scene);
 
-  // Создание мячей
   ball1 = createBall(scene, P1_START_X, P1_START_Y, 0x38bdf8); // Синий
   ball2 = createBall(scene, P2_START_X, P2_START_Y, 0xf43f5e); // Красный
 
-  if (gameMode === 'online' && myPlayerNumber === 2) {
-    myBall = ball2;
-    enemyBall = ball1;
-  } else {
-    myBall = ball1;
-    enemyBall = ball2;
-  }
+  myBall = ball1;
+  enemyBall = ball2;
 
-  // Коллизии
   [ball1, ball2].forEach(b => {
     scene.physics.add.collider(b, floor, () => bounces++);
     scene.physics.add.collider(b, topWall, () => bounces++);
@@ -106,38 +109,46 @@ function create() {
     scene.physics.add.overlap(b, hoop, () => handleGoal(scene, b));
   });
 
-  // --- Управление с поддержкой вывода за пределы окна (Global Drag) ---
+  // Проверка остановки мяча (Запрет прицеливания в движении)
   scene.input.on('pointerdown', (pointer) => {
-    if (!isMyTurn) return;
+    if (!isMyTurn || !myBall) return;
+    
+    // Мяч считается остановленным, если его скорость меньше 15
+    const isStopped = myBall.body.velocity.length() < 15;
+    if (!isStopped) return;
+
     isAiming = true;
     scene.physics.world.timeScale = 0.3; // Замедление при прицеливании
   });
 
-  // Отслеживаем отпускание мыши по ВСЕМУ окну браузера
   window.addEventListener('pointerup', (e) => {
     if (!isAiming) return;
     isAiming = false;
     scene.physics.world.timeScale = 1.0;
     trajectoryGraphics.clear();
 
-    // Получаем мировые координаты курсора с учетом canvas
-    const canvasBounds = scene.game.canvas.getBoundingClientRect();
-    const pointerX = e.clientX - canvasBounds.left;
-    const pointerY = e.clientY - canvasBounds.top;
-
-    // Расчет силы и направления
-    const vx = (myBall.x - pointerX) * 3.8;
-    const vy = (myBall.y - pointerY) * 3.8;
+    const pointerPos = getCanvasPointerPos(scene, e);
+    const vx = (myBall.x - pointerPos.x) * 3.8;
+    const vy = (myBall.y - pointerPos.y) * 3.8;
 
     myBall.body.setVelocity(vx, vy);
 
-    if (gameMode === 'online' && socket) {
-      socket.emit('shoot', { vx, vy });
+    if (gameMode === 'online' && socket && currentRoomId) {
+      socket.emit('shoot', { vx, vy, roomId: currentRoomId });
     } else if (gameMode === 'bot') {
       isMyTurn = false;
-      setTimeout(() => botTurn(scene), 2500);
+      setTimeout(() => botTurn(scene), 3000);
     }
   });
+}
+
+// Преобразование глобальных координат мыши в координаты игрового Canvas
+function getCanvasPointerPos(scene, event) {
+  const canvasBounds = scene.game.canvas.getBoundingClientRect();
+  return {
+    x: event.clientX - canvasBounds.left,
+    y: event.clientY - canvasBounds.top
+  };
 }
 
 function createBall(scene, x, y, color) {
@@ -145,8 +156,6 @@ function createBall(scene, x, y, color) {
   scene.physics.add.existing(b);
   b.body.setCollideWorldBounds(true);
   b.body.setBounce(0.72);
-  
-  // Естественное сопротивление воздуха (мяч плавно летит по параболе)
   b.body.setDrag(0.998);
   return b;
 }
@@ -176,23 +185,20 @@ function drawHoopAndBackboard(scene) {
 }
 
 function update() {
+  const scene = this;
   if (isAiming && myBall) {
     trajectoryGraphics.clear();
-    const pointer = game.scene.scenes[0].input.activePointer;
-
-    const canvasBounds = game.canvas.getBoundingClientRect();
-    const pointerX = pointer.event.clientX - canvasBounds.left;
-    const pointerY = pointer.event.clientY - canvasBounds.top;
-
-    const vx = (myBall.x - pointerX) * 3.8;
-    const vy = (myBall.y - pointerY) * 3.8;
+    
+    // Получаем корректные координаты мыши даже за пределами окна
+    const pointerPos = getCanvasPointerPos(scene, window.event || {});
+    const vx = (myBall.x - pointerPos.x) * 3.8;
+    const vy = (myBall.y - pointerPos.y) * 3.8;
 
     drawTrajectory(myBall.x, myBall.y, vx, vy, config.physics.arcade.gravity.y);
   }
 
-  // Синхронизация сетевых координат для игры с 2 ПК
-  if (gameMode === 'online' && socket && myBall) {
-    socket.emit('update_ball', { x: myBall.x, y: myBall.y });
+  if (gameMode === 'online' && socket && currentRoomId && myBall) {
+    socket.emit('update_ball', { x: myBall.x, y: myBall.y, roomId: currentRoomId });
   }
 }
 
@@ -211,7 +217,6 @@ function drawTrajectory(startX, startY, vx, vy, gravity) {
   }
 }
 
-// ИИ Бота для игры со вторым мячом
 function botTurn(scene) {
   if (gameMode !== 'bot') return;
 
@@ -223,14 +228,15 @@ function botTurn(scene) {
 
   setTimeout(() => {
     isMyTurn = true;
-  }, 2500);
+  }, 3000);
 }
 
+// Правильный расчет очков (1 очко за чистый гол + 1 за каждый рикошет)
 function handleGoal(scene, ball) {
-  const points = (bounces + 1) * 2;
+  const points = 1 + bounces; 
   if (ball === ball1) {
     score1 += points;
-    document.getElementById('p1-score').innerText = `${gameMode === 'bot' ? 'Игрок' : 'Игрок 1'}: ${score1}`;
+    document.getElementById('p1-score').innerText = `Игрок 1: ${score1}`;
     resetBall(ball1, P1_START_X, P1_START_Y);
   } else {
     score2 += points;
@@ -244,6 +250,7 @@ function resetBall(ball, x, y) {
   ball.body.setVelocity(0, 0);
   ball.setPosition(x, y);
   bounces = 0;
+  document.getElementById('multiplier').innerText = `Множитель: x1`;
 }
 
 function resetGame() {
