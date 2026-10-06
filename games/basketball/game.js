@@ -11,25 +11,19 @@ const config = {
   scene: { create: create, update: update }
 };
 
-let game, ball1, ball2, myBall, enemyBall, hoop, backboard;
+let game, ball, hoopGroup, backboard, hoopZone;
+let obstacle;
 let isAiming = false, trajectoryGraphics;
-let score1 = 0, score2 = 0, bounces = 0;
-let gameMode = 'bot'; 
-let myPlayerNumber = 1;
-let currentRoomId = null;
-let socket = null;
-let isMyTurn = true;
+let score = 0, currentRound = 1;
+const MAX_ROUNDS = 20;
+let shotTaken = false;
 let currentPointer = { x: 0, y: 0 };
 
-const P1_START_X = 120, P1_START_Y = 380;
-const P2_START_X = 280, P2_START_Y = 380;
-
-document.getElementById('btn-bot').addEventListener('click', () => startGame('bot'));
-document.getElementById('btn-local').addEventListener('click', () => startGame('online'));
+document.getElementById('btn-bot').addEventListener('click', () => startGame('single'));
+document.getElementById('btn-local').addEventListener('click', () => startGame('single'));
 document.getElementById('btn-restart').addEventListener('click', resetGame);
 
 function startGame(mode) {
-  gameMode = mode;
   document.getElementById('menu').style.display = 'none';
   document.getElementById('game-info').style.display = 'flex';
 
@@ -38,89 +32,64 @@ function startGame(mode) {
   } else {
     resetGame();
   }
-
-  if (mode === 'online') {
-    setupSocket();
-  }
-}
-
-function setupSocket() {
-  if (!socket) {
-    socket = io();
-  }
-
-  socket.on('waiting_for_opponent', () => {
-    document.getElementById('p1-score').innerText = 'Поиск второго игрока...';
-    document.getElementById('p2-score').innerText = '';
-  });
-
-  socket.on('init_player', (data) => {
-    myPlayerNumber = data.number;
-    currentRoomId = data.roomId;
-    
-    document.getElementById('p1-score').innerText = `Игрок 1: ${score1}`;
-    document.getElementById('p2-score').innerText = `Игрок 2: ${score2}`;
-
-    if (myPlayerNumber === 2) {
-      myBall = ball2;
-      enemyBall = ball1;
-    } else {
-      myBall = ball1;
-      enemyBall = ball2;
-    }
-  });
-
-  socket.on('enemy_shoot', (data) => {
-    if (enemyBall) {
-      enemyBall.body.setVelocity(data.vx, data.vy);
-    }
-  });
-
-  socket.on('enemy_ball_update', (data) => {
-    if (enemyBall) {
-      enemyBall.setPosition(data.x, data.y);
-    }
-  });
 }
 
 function create() {
   const scene = this;
   trajectoryGraphics = scene.add.graphics();
 
+  // Границы игрового поля
   const floor = scene.add.rectangle(450, 490, 900, 20, 0x475569);
   scene.physics.add.existing(floor, true);
 
   const topWall = scene.add.rectangle(450, 10, 900, 20, 0x475569);
   scene.physics.add.existing(topWall, true);
 
-  const wall = scene.add.rectangle(890, 250, 20, 500, 0x64748b);
-  scene.physics.add.existing(wall, true);
+  const leftWall = scene.add.rectangle(10, 250, 20, 500, 0x64748b);
+  scene.physics.add.existing(leftWall, true);
 
-  drawHoopAndBackboard(scene);
+  const rightWall = scene.add.rectangle(890, 250, 20, 500, 0x64748b);
+  scene.physics.add.existing(rightWall, true);
 
-  ball1 = createBall(scene, P1_START_X, P1_START_Y, 0x38bdf8);
-  ball2 = createBall(scene, P2_START_X, P2_START_Y, 0xf43f5e);
+  // Мяч
+  ball = scene.add.circle(100, 300, 14, 0xf97316);
+  scene.physics.add.existing(ball);
+  ball.body.setCollideWorldBounds(true);
+  ball.body.setBounce(0.7);
+  ball.body.setDrag(0.998);
 
-  myBall = ball1;
-  enemyBall = ball2;
+  // Группа для графики кольца
+  hoopGroup = scene.add.graphics();
 
-  [ball1, ball2].forEach(b => {
-    scene.physics.add.collider(b, floor, () => bounces++);
-    scene.physics.add.collider(b, topWall, () => bounces++);
-    scene.physics.add.collider(b, wall, () => bounces++);
-    scene.physics.add.collider(b, backboard, () => bounces++);
-    scene.physics.add.overlap(b, hoop, () => handleGoal(scene, b));
-  });
+  // Физическое кольцо и щит
+  backboard = scene.add.rectangle(0, 0, 12, 100, 0x000000, 0);
+  scene.physics.add.existing(backboard, true);
 
-  // Захват нажатия (только если мяч практически неподвижен)
+  hoopZone = scene.add.rectangle(0, 0, 45, 10, 0x000000, 0);
+  scene.physics.add.existing(hoopZone, true);
+
+  // Препятствие
+  obstacle = scene.add.rectangle(0, 0, 20, 100, 0x94a3b8);
+  scene.physics.add.existing(obstacle, true);
+
+  // Коллизии
+  scene.physics.add.collider(ball, floor);
+  scene.physics.add.collider(ball, topWall);
+  scene.physics.add.collider(ball, leftWall);
+  scene.physics.add.collider(ball, rightWall);
+  scene.physics.add.collider(ball, backboard);
+  scene.physics.add.collider(ball, obstacle);
+  scene.physics.add.overlap(ball, hoopZone, () => handleGoal(scene));
+
+  // Управление
   scene.input.on('pointerdown', (pointer) => {
-    if (!isMyTurn || !myBall) return;
-    if (myBall.body.speed > 10) return; // Запрет прицеливания во время движения
+    if (shotTaken || currentRound > MAX_ROUNDS) return;
+    if (ball.body.speed > 10) return;
 
     isAiming = true;
     currentPointer.x = pointer.x;
     currentPointer.y = pointer.y;
-    scene.physics.world.timeScale = 0.3;
+    scene.physics.world.timeScale = 0.3; // Замедление при прицеливании
   });
 
   scene.input.on('pointermove', (pointer) => {
@@ -133,67 +102,89 @@ function create() {
   scene.input.on('pointerup', () => {
     if (!isAiming) return;
     isAiming = false;
+    shotTaken = true;
     scene.physics.world.timeScale = 1.0;
     trajectoryGraphics.clear();
 
-    const vx = (myBall.x - currentPointer.x) * 3.8;
-    const vy = (myBall.y - currentPointer.y) * 3.8;
+    const vx = (ball.x - currentPointer.x) * 3.8;
+    const vy = (ball.y - currentPointer.y) * 3.8;
 
-    myBall.body.setVelocity(vx, vy);
+    ball.body.setVelocity(vx, vy);
 
-    if (gameMode === 'online' && socket && currentRoomId) {
-      socket.emit('shoot', { vx, vy, roomId: currentRoomId });
-    } else if (gameMode === 'bot') {
-      isMyTurn = false;
-      setTimeout(() => botTurn(scene), 3000);
-    }
+    // Если мяч остановился или промахнулся — через 3.5 сек новый раунд
+    scene.time.delayedCall(3500, () => {
+      nextRound(scene);
+    });
   });
+
+  setupNewRound(scene);
 }
 
-function createBall(scene, x, y, color) {
-  const b = scene.add.circle(x, y, 14, color);
-  scene.physics.add.existing(b);
-  b.body.setCollideWorldBounds(true);
-  b.body.setBounce(0.72);
-  b.body.setDrag(0.998);
-  return b;
+function setupNewRound(scene) {
+  if (currentRound > MAX_ROUNDS) {
+    alert(`Игра окончена! Ваш итоговый счет: ${score} из ${MAX_ROUNDS}`);
+    return;
+  }
+
+  shotTaken = false;
+  ball.body.setVelocity(0, 0);
+
+  // 1. Случайная позиция мяча (в левой/средней части экрана)
+  const ballX = Phaser.Math.Between(80, 400);
+  const ballY = Phaser.Math.Between(150, 420);
+  ball.setPosition(ballX, ballY);
+
+  // 2. Случайная позиция кольца (в правой части экрана)
+  const hoopX = Phaser.Math.Between(600, 820);
+  const hoopY = Phaser.Math.Between(120, 320);
+
+  backboard.setPosition(hoopX + 30, hoopY - 10);
+  hoopZone.setPosition(hoopX, hoopY);
+
+  // Перерисовка кольца и сетки в новых координатах
+  drawHoop(hoopX, hoopY);
+
+  // 3. Случайное препятствие (50% шанс появления)
+  if (Math.random() > 0.5) {
+    obstacle.setActive(true).setVisible(true);
+    const obsX = Phaser.Math.Between(450, 580);
+    const obsY = Phaser.Math.Between(150, 380);
+    obstacle.setPosition(obsX, obsY);
+  } else {
+    obstacle.setActive(false).setVisible(false);
+    obstacle.setPosition(-100, -100);
+  }
+
+  updateUI();
 }
 
-function drawHoopAndBackboard(scene) {
-  const g = scene.add.graphics();
-  g.lineStyle(3, 0xffffff, 0.9);
-  g.fillStyle(0xffffff, 0.15);
-  g.strokeRect(810, 140, 12, 110);
-  g.fillRect(810, 140, 12, 110);
-  g.strokeRect(810, 200, 12, 35);
+function drawHoop(x, y) {
+  hoopGroup.clear();
 
-  backboard = scene.add.rectangle(816, 195, 12, 110, 0x000000, 0);
-  scene.physics.add.existing(backboard, true);
+  // Щит
+  hoopGroup.lineStyle(3, 0xffffff, 0.9);
+  hoopGroup.fillStyle(0xffffff, 0.15);
+  hoopGroup.strokeRect(x + 24, y - 50, 10, 90);
+  hoopGroup.fillRect(x + 24, y - 50, 10, 90);
 
-  g.lineStyle(4, 0xe11d48, 1);
-  g.strokeRoundedRect(740, 220, 70, 8, 4);
+  // Дужка кольца
+  hoopGroup.lineStyle(4, 0xe11d48, 1);
+  hoopGroup.strokeRoundedRect(x - 25, y - 4, 50, 8, 3);
 
-  hoop = scene.add.rectangle(770, 224, 50, 10, 0x000000, 0);
-  scene.physics.add.existing(hoop, true);
-
-  g.lineStyle(1.5, 0xf8fafc, 0.85);
-  for (let x = 745; x <= 805; x += 10) {
-    g.lineBetween(x, 228, x + (x < 775 ? 5 : -5), 270);
-    g.lineBetween(x, 228, x + (x < 775 ? -5 : 5), 270);
+  // Сетка
+  hoopGroup.lineStyle(1.5, 0xf8fafc, 0.85);
+  for (let i = -20; i <= 20; i += 8) {
+    hoopGroup.lineBetween(x + i, y + 4, x + i * 0.5, y + 40);
   }
 }
 
 function update() {
-  if (isAiming && myBall) {
+  if (isAiming) {
     trajectoryGraphics.clear();
-    const vx = (myBall.x - currentPointer.x) * 3.8;
-    const vy = (myBall.y - currentPointer.y) * 3.8;
+    const vx = (ball.x - currentPointer.x) * 3.8;
+    const vy = (ball.y - currentPointer.y) * 3.8;
 
-    drawTrajectory(myBall.x, myBall.y, vx, vy, config.physics.arcade.gravity.y);
-  }
-
-  if (gameMode === 'online' && socket && currentRoomId && myBall) {
-    socket.emit('update_ball', { x: myBall.x, y: myBall.y, roomId: currentRoomId });
+    drawTrajectory(ball.x, ball.y, vx, vy, config.physics.arcade.gravity.y);
   }
 }
 
@@ -208,50 +199,37 @@ function drawTrajectory(startX, startY, vx, vy, gravity) {
     currVy += gravity * dt;
 
     trajectoryGraphics.fillCircle(x, y, Math.max(1, 3.5 - (i * 0.1)));
-    if (y > 480 || x > 880) break;
+    if (y > 480 || x > 880 || x < 10) break;
   }
 }
 
-function botTurn(scene) {
-  if (gameMode !== 'bot') return;
-
-  const isBounceShot = Math.random() > 0.4;
-  let vx = isBounceShot ? 480 + Math.random() * 80 : 380 + Math.random() * 30;
-  let vy = isBounceShot ? -420 - Math.random() * 80 : -480 - Math.random() * 30;
-
-  ball2.body.setVelocity(vx, vy);
-
-  setTimeout(() => {
-    isMyTurn = true;
-  }, 3000);
+function handleGoal(scene) {
+  if (!shotTaken) return;
+  score++;
+  updateUI();
+  
+  // При попадании сразу переходим к следующему раунду
+  shotTaken = false;
+  scene.time.delayedCall(800, () => {
+    nextRound(scene);
+  });
 }
 
-function handleGoal(scene, ball) {
-  const points = 1 + bounces; 
-  if (ball === ball1) {
-    score1 += points;
-    document.getElementById('p1-score').innerText = `Игрок 1: ${score1}`;
-    resetBall(ball1, P1_START_X, P1_START_Y);
-  } else {
-    score2 += points;
-    const name = gameMode === 'bot' ? 'Бот' : 'Игрок 2';
-    document.getElementById('p2-score').innerText = `${name}: ${score2}`;
-    resetBall(ball2, P2_START_X, P2_START_Y);
-  }
+function nextRound(scene) {
+  currentRound++;
+  setupNewRound(scene);
 }
 
-function resetBall(ball, x, y) {
-  ball.body.setVelocity(0, 0);
-  ball.setPosition(x, y);
-  bounces = 0;
-  document.getElementById('multiplier').innerText = `Множитель: x1`;
+function updateUI() {
+  document.getElementById('p1-score').innerText = `Очки: ${score}`;
+  document.getElementById('p2-score').innerText = `Раунд: ${Math.min(currentRound, MAX_ROUNDS)} / ${MAX_ROUNDS}`;
 }
 
 function resetGame() {
-  score1 = 0; score2 = 0;
-  document.getElementById('p1-score').innerText = `Игрок 1: 0`;
-  document.getElementById('p2-score').innerText = `Игрок 2 / Бот: 0`;
-  resetBall(ball1, P1_START_X, P1_START_Y);
-  resetBall(ball2, P2_START_X, P2_START_Y);
-  isMyTurn = true;
+  score = 0;
+  currentRound = 1;
+  shotTaken = false;
+  if (game && game.scene.scenes[0]) {
+    setupNewRound(game.scene.scenes[0]);
+  }
 }
