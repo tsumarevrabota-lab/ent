@@ -84,7 +84,6 @@ function create() {
   // ”правление
   scene.input.on('pointerdown', (pointer) => {
     if (shotTaken || currentRound > MAX_ROUNDS) return;
-    if (ball.body.speed > 10) return;
 
     isAiming = true;
     currentPointer.x = pointer.x;
@@ -106,12 +105,15 @@ function create() {
     scene.physics.world.timeScale = 1.0;
     trajectoryGraphics.clear();
 
+    // ?? ¬ключаем гравитацию только в момент броска
+    ball.body.allowGravity = true;
+
     const vx = (ball.x - currentPointer.x) * 3.8;
     const vy = (ball.y - currentPointer.y) * 3.8;
 
     ball.body.setVelocity(vx, vy);
 
-    // ≈сли м€ч остановилс€ или промахнулс€ Ч через 3.5 сек новый раунд
+    // ѕереход к следующему раунду через 3.5 секунды после броска
     scene.time.delayedCall(3500, () => {
       nextRound(scene);
     });
@@ -127,28 +129,31 @@ function setupNewRound(scene) {
   }
 
   shotTaken = false;
+  
+  // ?? ќтключаем гравитацию, чтобы м€ч висел в воздухе до броска
+  ball.body.allowGravity = false;
   ball.body.setVelocity(0, 0);
 
-  // 1. —лучайна€ позици€ м€ча (в левой/средней части экрана)
+  // 1. —лучайна€ позици€ м€ча (в любой точке левой/центральной части)
   const ballX = Phaser.Math.Between(80, 400);
-  const ballY = Phaser.Math.Between(150, 420);
+  const ballY = Phaser.Math.Between(100, 400);
   ball.setPosition(ballX, ballY);
 
-  // 2. —лучайна€ позици€ кольца (в правой части экрана)
+  // 2. —лучайна€ позици€ кольца
   const hoopX = Phaser.Math.Between(600, 820);
   const hoopY = Phaser.Math.Between(120, 320);
 
   backboard.setPosition(hoopX + 30, hoopY - 10);
   hoopZone.setPosition(hoopX, hoopY);
 
-  // ѕерерисовка кольца и сетки в новых координатах
+  // ќтрисовка кольца
   drawHoop(hoopX, hoopY);
 
-  // 3. —лучайное преп€тствие (50% шанс по€влени€)
+  // 3. —лучайное преп€тствие
   if (Math.random() > 0.5) {
     obstacle.setActive(true).setVisible(true);
     const obsX = Phaser.Math.Between(450, 580);
-    const obsY = Phaser.Math.Between(150, 380);
+    const obsY = Phaser.Math.Between(120, 380);
     obstacle.setPosition(obsX, obsY);
   } else {
     obstacle.setActive(false).setVisible(false);
@@ -167,7 +172,7 @@ function drawHoop(x, y) {
   hoopGroup.strokeRect(x + 24, y - 50, 10, 90);
   hoopGroup.fillRect(x + 24, y - 50, 10, 90);
 
-  // ƒужка кольца
+  // ƒужка
   hoopGroup.lineStyle(4, 0xe11d48, 1);
   hoopGroup.strokeRoundedRect(x - 25, y - 4, 50, 8, 3);
 
@@ -208,7 +213,6 @@ function handleGoal(scene) {
   score++;
   updateUI();
   
-  // ѕри попадании сразу переходим к следующему раунду
   shotTaken = false;
   scene.time.delayedCall(800, () => {
     nextRound(scene);
