@@ -40,7 +40,7 @@ function create() {
   const scene = this;
   trajectoryGraphics = scene.add.graphics();
 
-  // Границы игрового поля
+  // 1. Границы игрового поля
   const floor = scene.add.rectangle(450, 490, 900, 20, 0x475569);
   scene.physics.add.existing(floor, true);
 
@@ -53,37 +53,33 @@ function create() {
   const rightWall = scene.add.rectangle(890, 250, 20, 500, 0x64748b);
   scene.physics.add.existing(rightWall, true);
 
-  // Мяч
+  // 2. Мяч
   ball = scene.add.circle(100, 300, 14, 0xf97316);
   scene.physics.add.existing(ball);
   ball.body.setCollideWorldBounds(true);
   ball.body.setBounce(0.7);
   ball.body.setDrag(0.998);
 
-  // Графика для отрисовки кольца
+  // Графика кольца
   hoopGroup = scene.add.graphics();
 
-  // --- ФИЗИЧЕСКИЕ ХИТБОКСЫ КОЛЬЦА И ЩИТА ---
-  // 1. Щит (вертикальная преграда)
-  backboard = scene.add.rectangle(0, 0, 10, 90, 0x000000, 0);
+  // 3. Создаем статические объекты физики
+  backboard = scene.add.rectangle(0, 0, 10, 90, 0xffffff, 0);
   scene.physics.add.existing(backboard, true);
 
-  // 2. Передняя и задняя дужка кольца (точки отскока)
   rimFront = scene.add.circle(0, 0, 4, 0x000000, 0);
   scene.physics.add.existing(rimFront, true);
 
   rimBack = scene.add.circle(0, 0, 4, 0x000000, 0);
   scene.physics.add.existing(rimBack, true);
 
-  // 3. Зона попадания (сенсор внутри кольца)
   hoopZone = scene.add.rectangle(0, 0, 36, 10, 0x000000, 0);
   scene.physics.add.existing(hoopZone, true);
 
-  // Препятствие
   obstacle = scene.add.rectangle(0, 0, 20, 100, 0x94a3b8);
   scene.physics.add.existing(obstacle, true);
 
-  // Столкновения с объектами
+  // 4. Все физические столкновения
   scene.physics.add.collider(ball, floor);
   scene.physics.add.collider(ball, topWall);
   scene.physics.add.collider(ball, leftWall);
@@ -93,10 +89,10 @@ function create() {
   scene.physics.add.collider(ball, rimBack);
   scene.physics.add.collider(ball, obstacle);
 
-  // Регистрация гола
+  // Пересечение с зоной гола
   scene.physics.add.overlap(ball, hoopZone, () => handleGoal(scene));
 
-  // Управление
+  // 5. Управление
   scene.input.on('pointerdown', (pointer) => {
     if (shotTaken || currentRound > MAX_ROUNDS) return;
 
@@ -120,7 +116,6 @@ function create() {
     scene.physics.world.timeScale = 1.0;
     trajectoryGraphics.clear();
 
-    // Включаем физику полёта
     ball.body.allowGravity = true;
 
     const vx = (ball.x - currentPointer.x) * 3.8;
@@ -128,7 +123,6 @@ function create() {
 
     ball.body.setVelocity(vx, vy);
 
-    // Задержка на следующий раунд
     scene.time.delayedCall(3500, () => {
       nextRound(scene);
     });
@@ -146,45 +140,45 @@ function setupNewRound(scene) {
   shotTaken = false;
   goalScoredInRound = false;
 
-  // Мяч висит в воздухе без гравитации
   ball.body.allowGravity = false;
   ball.body.setVelocity(0, 0);
 
-  // 1. Случайная позиция мяча
+  // 1. Позиция мяча
   const ballX = Phaser.Math.Between(80, 400);
   const ballY = Phaser.Math.Between(100, 400);
   ball.setPosition(ballX, ballY);
 
-  // 2. Случайная позиция кольца
+  // 2. Позиция кольца
   const hoopX = Phaser.Math.Between(600, 820);
   const hoopY = Phaser.Math.Between(140, 320);
 
-  // Обновляем хитбоксы щита, дужек и зоны гола
+  // Важно: Позиционируем и ОБНОВЛЯЕМ ФИЗИЧЕСКИЕ ХИТБОКСЫ через refreshBody()!
   backboard.setPosition(hoopX + 29, hoopY - 5);
-  backboard.body.setSize(10, 90);
+  backboard.refreshBody();
 
   rimFront.setPosition(hoopX - 25, hoopY);
-  rimFront.body.setCircle(4);
+  rimFront.refreshBody();
 
   rimBack.setPosition(hoopX + 20, hoopY);
-  rimBack.body.setCircle(4);
+  rimBack.refreshBody();
 
   hoopZone.setPosition(hoopX, hoopY + 2);
-  hoopZone.body.setSize(36, 10);
+  hoopZone.refreshBody();
 
   // Отрисовка визуала
   drawHoop(hoopX, hoopY);
 
-  // 3. Препятствие
+  // 3. Препятствие (перегородка)
   if (Math.random() > 0.5) {
     obstacle.setActive(true).setVisible(true);
     const obsX = Phaser.Math.Between(450, 560);
     const obsY = Phaser.Math.Between(120, 380);
     obstacle.setPosition(obsX, obsY);
-    obstacle.body.setSize(20, 100);
+    obstacle.refreshBody(); // Обновление хитбокса препятствия!
   } else {
     obstacle.setActive(false).setVisible(false);
-    obstacle.setPosition(-100, -100);
+    obstacle.setPosition(-200, -200);
+    obstacle.refreshBody();
   }
 
   updateUI();
@@ -199,10 +193,9 @@ function drawHoop(x, y) {
   hoopGroup.strokeRect(x + 24, y - 50, 10, 90);
   hoopGroup.fillRect(x + 24, y - 50, 10, 90);
 
-  // Внутренний квадрат на щите
   hoopGroup.strokeRect(x + 24, y - 10, 10, 30);
 
-  // Дужка кольца
+  // Дужка
   hoopGroup.lineStyle(4, 0xe11d48, 1);
   hoopGroup.strokeRoundedRect(x - 25, y - 4, 50, 8, 3);
 
@@ -239,7 +232,6 @@ function drawTrajectory(startX, startY, vx, vy, gravity) {
 }
 
 function handleGoal(scene) {
-  // Засчитываем очко только если был бросок и очко еще не начислялось в этом раунде
   if (!shotTaken || goalScoredInRound) return;
 
   goalScoredInRound = true;
