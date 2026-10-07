@@ -6,7 +6,10 @@ const config = {
   backgroundColor: '#1e293b',
   physics: {
     default: 'arcade',
-    arcade: { gravity: { y: 650 }, debug: false }
+    arcade: { 
+      gravity: { y: 650 }, 
+      debug: true // ?? Включена отладка: хитбоксы подсвечиваются зеленым/красным
+    }
   },
   scene: { create: create, update: update }
 };
@@ -40,7 +43,7 @@ function create() {
   const scene = this;
   trajectoryGraphics = scene.add.graphics();
 
-  // 1. Границы игрового поля
+  // 1. Границы игровой зоны (статические)
   const floor = scene.add.rectangle(450, 490, 900, 20, 0x475569);
   scene.physics.add.existing(floor, true);
 
@@ -60,26 +63,36 @@ function create() {
   ball.body.setBounce(0.7);
   ball.body.setDrag(0.998);
 
-  // Графика кольца
+  // Графика для визуализации кольца
   hoopGroup = scene.add.graphics();
 
-  // 3. Создаем статические объекты физики
-  backboard = scene.add.rectangle(0, 0, 10, 90, 0xffffff, 0);
-  scene.physics.add.existing(backboard, true);
+  // 3. Создаем элементы физики с зафиксированным положением (immovable)
+  backboard = scene.add.rectangle(0, 0, 12, 90, 0xffffff, 0);
+  scene.physics.add.existing(backboard);
+  backboard.body.setImmovable(true);
+  backboard.body.allowGravity = false;
 
-  rimFront = scene.add.circle(0, 0, 4, 0x000000, 0);
-  scene.physics.add.existing(rimFront, true);
+  rimFront = scene.add.circle(0, 0, 5, 0xff0000, 0);
+  scene.physics.add.existing(rimFront);
+  rimFront.body.setImmovable(true);
+  rimFront.body.allowGravity = false;
 
-  rimBack = scene.add.circle(0, 0, 4, 0x000000, 0);
-  scene.physics.add.existing(rimBack, true);
+  rimBack = scene.add.circle(0, 0, 5, 0xff0000, 0);
+  scene.physics.add.existing(rimBack);
+  rimBack.body.setImmovable(true);
+  rimBack.body.allowGravity = false;
 
-  hoopZone = scene.add.rectangle(0, 0, 36, 10, 0x000000, 0);
-  scene.physics.add.existing(hoopZone, true);
+  hoopZone = scene.add.rectangle(0, 0, 36, 10, 0x00ff00, 0);
+  scene.physics.add.existing(hoopZone);
+  hoopZone.body.setImmovable(true);
+  hoopZone.body.allowGravity = false;
 
-  obstacle = scene.add.rectangle(0, 0, 20, 100, 0x94a3b8);
-  scene.physics.add.existing(obstacle, true);
+  obstacle = scene.add.rectangle(0, 0, 24, 110, 0x94a3b8);
+  scene.physics.add.existing(obstacle);
+  obstacle.body.setImmovable(true);
+  obstacle.body.allowGravity = false;
 
-  // 4. Все физические столкновения
+  // 4. Физические коллизии
   scene.physics.add.collider(ball, floor);
   scene.physics.add.collider(ball, topWall);
   scene.physics.add.collider(ball, leftWall);
@@ -89,7 +102,7 @@ function create() {
   scene.physics.add.collider(ball, rimBack);
   scene.physics.add.collider(ball, obstacle);
 
-  // Пересечение с зоной гола
+  // Оверлап для засчитывания очков
   scene.physics.add.overlap(ball, hoopZone, () => handleGoal(scene));
 
   // 5. Управление
@@ -143,42 +156,34 @@ function setupNewRound(scene) {
   ball.body.allowGravity = false;
   ball.body.setVelocity(0, 0);
 
-  // 1. Позиция мяча
-  const ballX = Phaser.Math.Between(80, 400);
+  // Позиция мяча
+  const ballX = Phaser.Math.Between(80, 380);
   const ballY = Phaser.Math.Between(100, 400);
   ball.setPosition(ballX, ballY);
 
-  // 2. Позиция кольца
-  const hoopX = Phaser.Math.Between(600, 820);
-  const hoopY = Phaser.Math.Between(140, 320);
+  // Позиция кольца
+  const hoopX = Phaser.Math.Between(600, 800);
+  const hoopY = Phaser.Math.Between(150, 320);
 
-  // Важно: Позиционируем и ОБНОВЛЯЕМ ФИЗИЧЕСКИЕ ХИТБОКСЫ через refreshBody()!
+  // Обновление позиций физических тел
   backboard.setPosition(hoopX + 29, hoopY - 5);
-  backboard.refreshBody();
-
   rimFront.setPosition(hoopX - 25, hoopY);
-  rimFront.refreshBody();
-
   rimBack.setPosition(hoopX + 20, hoopY);
-  rimBack.refreshBody();
-
   hoopZone.setPosition(hoopX, hoopY + 2);
-  hoopZone.refreshBody();
 
-  // Отрисовка визуала
   drawHoop(hoopX, hoopY);
 
-  // 3. Препятствие (перегородка)
-  if (Math.random() > 0.5) {
-    obstacle.setActive(true).setVisible(true);
-    const obsX = Phaser.Math.Between(450, 560);
-    const obsY = Phaser.Math.Between(120, 380);
+  // Позиция перегородки
+  if (Math.random() > 0.4) {
+    const obsX = Phaser.Math.Between(440, 560);
+    const obsY = Phaser.Math.Between(150, 350);
     obstacle.setPosition(obsX, obsY);
-    obstacle.refreshBody(); // Обновление хитбокса препятствия!
+    obstacle.setVisible(true);
+    obstacle.body.enable = true;
   } else {
-    obstacle.setActive(false).setVisible(false);
     obstacle.setPosition(-200, -200);
-    obstacle.refreshBody();
+    obstacle.setVisible(false);
+    obstacle.body.enable = false;
   }
 
   updateUI();
@@ -192,7 +197,6 @@ function drawHoop(x, y) {
   hoopGroup.fillStyle(0xffffff, 0.15);
   hoopGroup.strokeRect(x + 24, y - 50, 10, 90);
   hoopGroup.fillRect(x + 24, y - 50, 10, 90);
-
   hoopGroup.strokeRect(x + 24, y - 10, 10, 30);
 
   // Дужка
